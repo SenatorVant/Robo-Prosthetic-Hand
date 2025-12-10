@@ -1,0 +1,111 @@
+#include <Servo.h>
+
+const int NUM_FINGERS = 5;
+const int SERVOS_PER_FINGER = 2;
+
+// Flex sensor pins
+int flexPins[NUM_FINGERS] = {A0, A1, A2, A3, A4};
+
+// Servos per finger (each finger controls two servos)
+int servoPins[NUM_FINGERS][SERVOS_PER_FINGER] = {
+  {2, 3},   // Thumb
+  {4, 5},   // Index
+  {6, 7},   // Middle
+  {8, 9},   // Ring
+  {10, 11}  // Pinky
+};
+
+Servo servos[NUM_FINGERS][SERVOS_PER_FINGER];
+
+// Calibration (adjust with Serial Monitor)
+int flexMin[NUM_FINGERS] = {300, 300, 300, 300, 300};
+int flexMax[NUM_FINGERS] = {600, 600, 600, 600, 600};
+
+// Smoothing parameters
+const int NUM_SAMPLES = 10;
+int flexHistory[NUM_FINGERS][NUM_SAMPLES];
+int historyIndex = 0;
+
+// Gesture thresholds
+int fistThreshold = 500;
+int openThreshold = 350;
+
+void setup() {
+  Serial.begin(115200);
+
+  // Attach servos
+  for (int f = 0; f < NUM_FINGERS; f++) {
+    for (int s = 0; s < SERVOS_PER_FINGER; s++) {
+      servos[f][s].attach(servoPins[f][s]);
+    }
+  }
+
+  // Initialize smoothing buffers
+  for (int f = 0; f < NUM_FINGERS; f++) {
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+      flexHistory[f][i] = flexMin[f];
+    }
+  }
+}
+
+int smoothFlex(int finger) {
+  flexHistory[finger][historyIndex] = analogRead(flexPins[finger]);
+
+  long sum = 0;
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    sum += flexHistory[finger][i];
+  }
+
+  return sum / NUM_SAMPLES;
+}
+
+void moveFingerServos(int finger, int angle) {
+  // Servo 1 follows the angle fully
+  servos[finger][0].write(angle);
+
+  // Servo 2 follows partially for realistic finger motion
+  int secondaryAngle = map(angle, 0, 180, 0, 120);
+  servos[finger][1].write(secondaryAngle);
+}
+
+// Detect gestures
+String detectGesture(int flexValues[]) {
+  bool allBent = true;
+  bool allStraight = true;
+
+  for (int f = 0; f < NUM_FINGERS; f++) {
+    if (flexValues[f] < fistThreshold) allBent = false;
+    if (flexValues[f] > openThreshold) allStraight = false;
+  }
+
+  if (allBent) return "FIST";
+  if (allStraight) return "OPEN";
+
+  if (flexValues[1] < 450 && flexValues[0] > 450) return "POINT";
+
+  if (flexValues[0] < 450 && flexValues[1] < 450) return "PINCH";
+
+  return "NONE";
+}
+
+void loop() {
+  int flexValues[NUM_FINGERS];
+
+  historyIndex = (historyIndex + 1) % NUM_SAMPLES;
+
+  for (int f = 0; f < NUM_FINGERS; f++) {
+    flexValues[f] = smoothFlex(f);
+
+    int angle = map(flexValues[f], flexMin[f], flexMax[f], 0, 180);
+    angle = constrain(angle, 0, 180);
+
+    moveFingerServos(f, angle);
+  }
+
+  String gesture = detectGesture(flexValues);
+
+  Serial.print("Gesture: ");
+  Serial.println(gesture);
+
+  delay(10);
+}
